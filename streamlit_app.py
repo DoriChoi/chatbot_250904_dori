@@ -18,43 +18,53 @@ st.set_page_config(
 st.markdown("""
 <style>
 :root{
-  --bg:#0f172a;           /* 배경(딥 네이비) */
-  --card:#111827;         /* 카드(다크 그레이) */
-  --acc:#06b6d4;          /* 포커스(시안) */
-  --user:#1f2937;         /* 유저 말풍선 */
-  --bot:#0b1220;          /* 봇 말풍선 */
-  --text:#e5e7eb;         /* 기본 텍스트 */
-  --muted:#9ca3af;        /* 보조 텍스트 */
-  --border:#1f2937;
+  --bg:#ffffff;
+  --card:#ffffff;
+  --acc:#10b981;            /* 민트 포인트 */
+  --user:#ecfeff;           /* 연한 민트 말풍선 */
+  --bot:#fff7ed;            /* 연한 피치 말풍선 */
+  --text:#111827;
+  --muted:#6b7280;
+  --border:#e5e7eb;
 }
+
 html, body, [data-testid="stAppViewContainer"]{
-  background: radial-gradient(1200px 800px at 10% 10%, #0b1220 0%, var(--bg) 60%) !important;
+  background: radial-gradient(1200px 800px at 10% 10%, #f0f9ff 0%, var(--bg) 70%) !important;
   color: var(--text) !important;
 }
+
 section[data-testid="stSidebar"]{
   background-color: var(--card) !important;
   border-right: 1px solid var(--border);
 }
-.block-container{padding-top: 1.2rem;}
+
+.block-container{padding-top: 1.0rem;}
 div.stTextInput>div>div>input, textarea, .stSelectbox [data-baseweb="select"]{
-  background-color:#0b1220 !important; color:var(--text) !important; border:1px solid var(--border) !important;
+  background-color:#ffffff !important; color:var(--text) !important; border:1px solid var(--border) !important;
 }
+
 .stButton>button{
-  background: linear-gradient(90deg, #0891b2, #06b6d4);
-  border:0; color:white; font-weight:600;
+  background: linear-gradient(90deg, #34d399, #10b981);
+  border:0; color:white; font-weight:700;
+  box-shadow: 0 4px 14px rgba(16,185,129,.25);
 }
-.stButton>button:hover{filter:brightness(1.05);}
+.stButton>button:hover{filter:brightness(1.04);}
+
 .chat-header{
-  border:1px solid var(--border); background:linear-gradient(90deg, #0b1220, #0f172a 60%, #0b1220);
-  padding:16px 20px; border-radius:14px; box-shadow: 0 8px 30px rgba(0,0,0,.35);
+  border:1px solid var(--border);
+  background: linear-gradient(90deg, #f0fdf4, #ecfeff 60%, #f0f9ff);
+  padding:16px 20px; border-radius:14px;
+  box-shadow: 0 8px 24px rgba(2,132,199,.12);
 }
+
 .msg{border:1px solid var(--border); padding:14px 16px; border-radius:14px; margin:8px 0; line-height:1.55;}
 .msg.user{background-color: var(--user);}
 .msg.bot{background-color: var(--bot);}
 .msg .meta{font-size:12px; color:var(--muted); margin-bottom:6px;}
+
 hr{border-color:var(--border);}
 small.hint{color:var(--muted);}
-kbd{background:#0b1220; border:1px solid var(--border); border-bottom-width:2px; padding:1px 6px; border-radius:6px;}
+kbd{background:#f8fafc; border:1px solid var(--border); border-bottom-width:2px; padding:1px 6px; border-radius:6px;}
 </style>
 """, unsafe_allow_html=True)
 
