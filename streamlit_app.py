@@ -111,13 +111,27 @@ if clear_clicked:
     st.rerun()
 
 # ── OpenAI 클라이언트 ─────────────────────────────────────────────────────────
-def get_client() -> Optional[OpenAI]:
-    k = (api_key or "").strip()
-    if not k:
-        return None
-    return OpenAI(api_key=k)
+import openai  # 예외 타입 캐치를 위해 추가 (파일 상단 import들 근처)
 
-client = get_client()
+def get_client():
+    # 1순위: 세션에 저장된 키, 2순위: 입력창, 3순위: secrets
+    key_from_session = st.session_state.get("OPENAI_API_KEY", "")
+    key_from_input = (api_key or "").strip()
+    key_from_secret = st.secrets.get("OPENAI_API_KEY", "")
+
+    key = (key_from_session or key_from_input or key_from_secret).strip()
+    if not key:
+        return None
+
+    # 세션에 고정 저장(재실행/위젯변경에도 유지)
+    st.session_state["OPENAI_API_KEY"] = key
+
+    try:
+        return OpenAI(api_key=key)
+    except openai.OpenAIError as e:
+        st.error(f"OpenAI 클라이언트 초기화 실패: {e}")
+        return None
+
 
 # ── 스트리밍(문자열 제너레이터) ───────────────────────────────────────────────
 def stream_completion_text(
@@ -164,8 +178,28 @@ def write_stream_safe(gen: Generator[str, None, None]) -> str:
 # ── 기존 메시지 렌더링 ────────────────────────────────────────────────────────
 def render_message(role: str, content: str, when: Optional[str] = None):
     meta = when or datetime.now().strftime("%H:%M")
-    with st.chat_message("assistant" if role == "assistant" else "user",
-                         avatar="🤖" if role == "assistant" else "🧑"):
+   with st.chat_message("assistant", avatar="🤖"):
+    try:
+        response_text = write_stream_safe(
+            stream_completion_text(client, history, model, temperature, max_tokens)
+        )
+    except openai.AuthenticationError as e:
+        st.error("**인증 오류(401)**: API Key가 잘못됐거나 만료/권한 불일치입니다. "
+                 "Cloud Secrets에 올바른 키를 저장했는지 확인하세요.", icon="🚫")
+        st.stop()
+    except openai.PermissionDeniedError as e:
+        st.error("**권한 오류(403)**: 선택한 모델에 대한 권한이 없습니다. 모델을 바꾸거나 계정 권한을 확인하세요.", icon="🔒")
+        st.stop()
+    except openai.RateLimitError as e:
+        st.warning("**요청 제한(429)**: 호출이 많거나 한도를 초과했습니다. 잠시 후 재시도하세요.", icon="⏳")
+        st.stop()
+    except openai.BadRequestError as e:
+        st.error("**요청 오류(400)**: 파라미터/모델명이 잘못되었을 수 있습니다. 모델 선택과 입력을 확인하세요.", icon="❗")
+        st.stop()
+    except openai.OpenAIError as e:
+        st.error(f"OpenAI 오류: {e}", icon="💥")
+        st.stop()
+
         st.markdown(
             f'<div class="msg {"bot" if role=="assistant" else "user"}">'
             f'<div class="meta">{role} · {meta}</div>{content}</div>',
