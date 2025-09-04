@@ -130,39 +130,29 @@ def get_client() -> OpenAI | None:
 client = get_client()
 
 # ---------- 유틸: 스트리밍 제너레이터 ----------
-def stream_completion(
-    _client: OpenAI,
-    _messages: List[Dict[str, str]],
-) -> Generator[str, None, None]:
-    """
-    chat.completions 스트리밍을 Streamlit에 바로 쓸 수 있는 텍스트 제너레이터로 변환
-    """
-    with st.spinner("생성 중..."):
-        resp = _client.chat.completions.create(
-            model=model,
-            messages=_messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-        )
-        for chunk in resp:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if delta and delta.content:
-                yield delta.content
+def stream_completion_text(client, msgs, model, temperature, max_tokens):
+    resp = client.chat.completions.create(
+        model=model,
+        messages=msgs,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    for ch in resp:
+        if ch.choices and getattr(ch.choices[0].delta, "content", None):
+            yield ch.choices[0].delta.content  # 문자열만 yield
+
 
 # ---------- 기존 메시지 렌더 ----------
 def render_message(role: str, content: str, when: str | None = None):
     meta = when or datetime.now().strftime("%H:%M")
-    with st.chat_message("assistant" if role == "assistant" else "user",
-                         avatar="🤖" if role == "assistant" else "🧑"):
-        st.markdown(f'<div class="msg { "bot" if role=="assistant" else "user" }">'
-                    f'<div class="meta">{role} · {meta}</div>'
-                    f'{content}</div>', unsafe_allow_html=True)
-
-for m in st.session_state.messages:
-    render_message(m["role"], m["content"], m.get("time"))
+   with st.chat_message("assistant", avatar="🤖"):
+    response_text = st.write_stream(
+        stream_completion_text(client, history, model, temperature, max_tokens)
+    )
+st.session_state.messages.append(
+    {"role": "assistant", "content": response_text, "time": datetime.now().strftime("%H:%M")}
+)
 
 # ---------- 키 유효성 안내 ----------
 if client is None:
