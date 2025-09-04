@@ -2,12 +2,12 @@
 from __future__ import annotations
 import json
 from datetime import datetime
-from typing import Dict, List, Generator
+from typing import Dict, List, Generator, Optional
 
 import streamlit as st
 from openai import OpenAI
 
-# ───────────── 페이지 기본 설정 (앱 최상단에서 1회만) ─────────────
+# ── 페이지 설정 ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Chatbot",
     page_icon="💬",
@@ -15,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ───────────── 라이트 & 상큼한 컬러 CSS 주입 ─────────────
+# ── 라이트 & 상큼한 컬러 CSS ───────────────────────────────────────────────────
 st.markdown("""
 <style>
 :root{
@@ -62,7 +62,7 @@ kbd{background:#f8fafc; border:1px solid var(--border); border-bottom-width:2px;
 </style>
 """, unsafe_allow_html=True)
 
-# ───────────── 상단 헤더 ─────────────
+# ── 상단 헤더 ─────────────────────────────────────────────────────────────────
 st.markdown(
     """
     <div class="chat-header">
@@ -75,22 +75,16 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ───────────── 사이드바: 설정 & 유틸 ─────────────
+# ── 사이드바(설정/유틸) ───────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("환경 설정")
-    # 우선순위: secrets → 입력
     default_key = st.secrets.get("OPENAI_API_KEY", "")
     api_key = st.text_input("OpenAI API Key", value=default_key, type="password",
                             help="배포에선 Cloud의 Secrets 탭 권장. 로컬은 .streamlit/secrets.toml 사용 가능.")
 
     model = st.selectbox(
         "Model",
-        options=[
-            "gpt-4o-mini",
-            "gpt-4o",
-            "gpt-4.1-mini",
-            "gpt-3.5-turbo"
-        ],
+        options=["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-3.5-turbo"],
         index=0
     )
     temperature = st.slider("Temperature", 0.0, 1.2, 0.7, 0.1)
@@ -108,7 +102,7 @@ with st.sidebar:
     download_clicked = col_b.button("내려받기(JSON)", use_container_width=True)
     examples_toggle = col_c.toggle("추천 질문", value=False)
 
-# ───────────── 세션 상태 ─────────────
+# ── 세션 상태 ────────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages: List[Dict[str, str]] = []
 
@@ -116,8 +110,8 @@ if clear_clicked:
     st.session_state.messages = []
     st.rerun()
 
-# ───────────── OpenAI 클라이언트 ─────────────
-def get_client() -> OpenAI | None:
+# ── OpenAI 클라이언트 ─────────────────────────────────────────────────────────
+def get_client() -> Optional[OpenAI]:
     k = (api_key or "").strip()
     if not k:
         return None
@@ -125,7 +119,7 @@ def get_client() -> OpenAI | None:
 
 client = get_client()
 
-# ───────────── 스트리밍(문자열 제너레이터) ─────────────
+# ── 스트리밍(문자열 제너레이터) ───────────────────────────────────────────────
 def stream_completion_text(
     _client: OpenAI,
     _messages: List[Dict[str, str]],
@@ -134,8 +128,8 @@ def stream_completion_text(
     _max_tokens: int,
 ) -> Generator[str, None, None]:
     """
-    chat.completions.create(stream=True)로 받은 토큰을 문자열만 yield.
-    Streamlit의 st.write_stream이 단일 요소에 '타자 효과'로 출력한다.
+    chat.completions 스트림에서 delta.content를 문자열로 yield.
+    st.write_stream에 넣으면 단일 요소에 타자 효과로 출력됨.
     """
     resp = _client.chat.completions.create(
         model=_model,
@@ -146,10 +140,29 @@ def stream_completion_text(
     )
     for chunk in resp:
         if chunk.choices and getattr(chunk.choices[0].delta, "content", None):
-            yield chunk.choices[0].delta.content  # 문자열만 넘긴다
+            yield chunk.choices[0].delta.content
 
-# ───────────── 기존 메시지 렌더 ─────────────
-def render_message(role: str, content: str, when: str | None = None):
+def write_stream_safe(gen: Generator[str, None, None]) -> str:
+    """
+    Streamlit 버전에 따라 st.write_stream 유무가 다를 수 있어
+    안전하게 처리. 없으면 placeholder로 직접 스트리밍.
+    """
+    if hasattr(st, "write_stream"):
+        return st.write_stream(gen)  # 최종 문자열 반환
+    # fallback
+    ph = st.empty()
+    acc = []
+    for tok in gen:
+        acc.append(tok)
+        ph.markdown(
+            f'<div class="msg bot"><div class="meta">assistant · {datetime.now():%H:%M}</div>'
+            f'{"".join(acc)}</div>',
+            unsafe_allow_html=True
+        )
+    return "".join(acc)
+
+# ── 기존 메시지 렌더링 ────────────────────────────────────────────────────────
+def render_message(role: str, content: str, when: Optional[str] = None):
     meta = when or datetime.now().strftime("%H:%M")
     with st.chat_message("assistant" if role == "assistant" else "user",
                          avatar="🤖" if role == "assistant" else "🧑"):
@@ -162,49 +175,51 @@ def render_message(role: str, content: str, when: str | None = None):
 for m in st.session_state.messages:
     render_message(m["role"], m["content"], m.get("time"))
 
-# ───────────── 추천 질문 (옵션) ─────────────
+# ── 추천 질문(클릭 시 즉시 전송) ───────────────────────────────────────────────
+suggestion: Optional[str] = None
 if examples_toggle:
-    st.caption("클릭하면 입력창에 채워집니다.")
+    st.caption("클릭하면 바로 전송됩니다.")
     c1, c2, c3 = st.columns(3)
     if c1.button("요약해줘(3줄)", use_container_width=True):
-        st.session_state._chat_input = "아래 텍스트를 3줄로 요약해줘:\n\n"
+        suggestion = "아래 텍스트를 3줄로 요약해줘:\n\n"
     if c2.button("영→한 번역", use_container_width=True):
-        st.session_state._chat_input = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n"
+        suggestion = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n"
     if c3.button("코드 리뷰", use_container_width=True):
-        st.session_state._chat_input = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n"
+        suggestion = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n"
 
-# ───────────── 키 안내 ─────────────
+# ── 키 안내 ───────────────────────────────────────────────────────────────────
 if client is None:
     st.info("사이드바에 **OpenAI API Key**를 입력하세요. 배포에선 Cloud의 **Secrets**에 저장 후 `st.secrets`로 읽는 것이 안전합니다.", icon="🔐")
 
-# ───────────── 채팅 입력 ─────────────
-# (추천 질문 버튼으로 채워준 값이 있으면 기본값으로 사용)
-default_prompt = st.session_state.pop("_chat_input", None) if "_chat_input" in st.session_state else None
-prompt = st.chat_input("메시지를 입력하세요…", default=default_prompt)
+# ── 채팅 입력(※ chat_input은 기본값 파라미터 없음) ───────────────────────────
+#    - suggestion이 있으면 그걸 최종 프롬프트로 즉시 사용
+#    - 없으면 사용자가 입력한 메시지 사용
+user_input = None if suggestion else st.chat_input("메시지를 입력하세요…")
+final_prompt = suggestion or user_input
 
-if prompt and client:
-    # 1) 메시지 스택 구성 (system → history → user)
+if final_prompt and client:
+    # 1) 메시지 스택 구성
     history: List[Dict[str, str]] = []
     if system_prompt.strip():
         history.append({"role": "system", "content": system_prompt.strip()})
     history.extend(st.session_state.messages)
-    user_msg = {"role": "user", "content": prompt}
+    user_msg = {"role": "user", "content": final_prompt}
     history.append(user_msg)
 
-    # 2) 화면에 유저 메시지 먼저 표시 + 세션 기록
-    render_message("user", prompt)
+    # 2) 사용자 메시지 출력 + 세션 기록
+    render_message("user", final_prompt)
     st.session_state.messages.append({**user_msg, "time": datetime.now().strftime("%H:%M")})
 
-    # 3) 어시스턴트 스트리밍 (중복 없이 단일 요소로)
+    # 3) 어시스턴트 스트리밍(중복 없는 단일 요소)
     with st.chat_message("assistant", avatar="🤖"):
-        response_text = st.write_stream(
+        response_text = write_stream_safe(
             stream_completion_text(client, history, model, temperature, max_tokens)
         )
     st.session_state.messages.append(
         {"role": "assistant", "content": response_text or "(응답 없음)", "time": datetime.now().strftime("%H:%M")}
     )
 
-# ───────────── 내려받기 ─────────────
+# ── 내려받기 ───────────────────────────────────────────────────────────────────
 if download_clicked:
     fname = f"chat_{datetime.now():%Y%m%d_%H%M%S}.json"
     st.download_button(
@@ -216,6 +231,6 @@ if download_clicked:
     )
     st.caption("대화 기록을 JSON으로 저장했습니다.")
 
-# ───────────── 빌드 태그(배포 반영 확인용) ─────────────
+# ── 빌드 태그(배포 반영 확인용) ────────────────────────────────────────────────
 st.markdown("<hr/>", unsafe_allow_html=True)
 st.caption("build: streamlit_app.py · layout=wide · light theme")
