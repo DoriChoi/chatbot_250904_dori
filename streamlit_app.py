@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, List, Generator, Optional
 
 import streamlit as st
+import openai
 from openai import OpenAI
 
 # ── 페이지 설정 ────────────────────────────────────────────────────────────────
@@ -68,7 +69,8 @@ st.markdown(
     <div class="chat-header">
       <h2 style="margin:0;">💬 Chatbot</h2>
       <div style="color:#6b7280;margin-top:6px;">
-        OpenAI Chat API 기반. 좌측에서 <b>모델/온도/시스템프롬프트</b>를 조절하고, API Key는 secrets 또는 입력으로 설정하세요.
+        OpenAI Chat API 기반. 좌측에서 <b>모델/온도/시스템프롬프트</b>를 조절하세요.
+        <b>API Key는 입력창에 넣으면 세션에 저장</b>됩니다(Secrets 불필요).
       </div>
     </div>
     """,
@@ -78,9 +80,15 @@ st.markdown(
 # ── 사이드바(설정/유틸) ───────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("환경 설정")
-    default_key = st.secrets.get("OPENAI_API_KEY", "")
-    api_key = st.text_input("OpenAI API Key", value=default_key, type="password",
-                            help="배포에선 Cloud의 Secrets 탭 권장. 로컬은 .streamlit/secrets.toml 사용 가능.")
+
+    # 세션에 이미 저장된 키가 있으면 그걸 기본값으로 사용 (Secrets 의존 X)
+    key_default = st.session_state.get("OPENAI_API_KEY", "")
+    api_key_input = st.text_input(
+        "OpenAI API Key",
+        value=key_default,
+        type="password",
+        help="입력하면 세션에 저장됩니다. 새 세션/새 탭에선 다시 입력 필요."
+    )
 
     model = st.selectbox(
         "Model",
@@ -110,28 +118,24 @@ if clear_clicked:
     st.session_state.messages = []
     st.rerun()
 
-# ── OpenAI 클라이언트 ─────────────────────────────────────────────────────────
-import openai  # 예외 타입 캐치를 위해 추가 (파일 상단 import들 근처)
+# ── OpenAI 클라이언트: 입력값→세션에 고정 저장 + 예외 처리 ────────────────────
+def get_client() -> Optional[OpenAI]:
+    # 1) 방금 입력값이 있으면 세션에 반영
+    if api_key_input and api_key_input.strip():
+        st.session_state["OPENAI_API_KEY"] = api_key_input.strip()
 
-def get_client():
-    # 1순위: 세션에 저장된 키, 2순위: 입력창, 3순위: secrets
-    key_from_session = st.session_state.get("OPENAI_API_KEY", "")
-    key_from_input = (api_key or "").strip()
-    key_from_secret = st.secrets.get("OPENAI_API_KEY", "")
-
-    key = (key_from_session or key_from_input or key_from_secret).strip()
+    # 2) 세션에 있는 키 사용
+    key = st.session_state.get("OPENAI_API_KEY", "").strip()
     if not key:
         return None
-
-    # 세션에 고정 저장(재실행/위젯변경에도 유지)
-    st.session_state["OPENAI_API_KEY"] = key
 
     try:
         return OpenAI(api_key=key)
     except openai.OpenAIError as e:
-        st.error(f"OpenAI 클라이언트 초기화 실패: {e}")
+        st.error(f"OpenAI 클라이언트 초기화 실패: {e}", icon="💥")
         return None
 
+client = get_client()
 
 # ── 스트리밍(문자열 제너레이터) ───────────────────────────────────────────────
 def stream_completion_text(
@@ -178,28 +182,8 @@ def write_stream_safe(gen: Generator[str, None, None]) -> str:
 # ── 기존 메시지 렌더링 ────────────────────────────────────────────────────────
 def render_message(role: str, content: str, when: Optional[str] = None):
     meta = when or datetime.now().strftime("%H:%M")
-   with st.chat_message("assistant", avatar="🤖"):
-    try:
-        response_text = write_stream_safe(
-            stream_completion_text(client, history, model, temperature, max_tokens)
-        )
-    except openai.AuthenticationError as e:
-        st.error("**인증 오류(401)**: API Key가 잘못됐거나 만료/권한 불일치입니다. "
-                 "Cloud Secrets에 올바른 키를 저장했는지 확인하세요.", icon="🚫")
-        st.stop()
-    except openai.PermissionDeniedError as e:
-        st.error("**권한 오류(403)**: 선택한 모델에 대한 권한이 없습니다. 모델을 바꾸거나 계정 권한을 확인하세요.", icon="🔒")
-        st.stop()
-    except openai.RateLimitError as e:
-        st.warning("**요청 제한(429)**: 호출이 많거나 한도를 초과했습니다. 잠시 후 재시도하세요.", icon="⏳")
-        st.stop()
-    except openai.BadRequestError as e:
-        st.error("**요청 오류(400)**: 파라미터/모델명이 잘못되었을 수 있습니다. 모델 선택과 입력을 확인하세요.", icon="❗")
-        st.stop()
-    except openai.OpenAIError as e:
-        st.error(f"OpenAI 오류: {e}", icon="💥")
-        st.stop()
-
+    with st.chat_message("assistant" if role == "assistant" else "user",
+                         avatar="🤖" if role == "assistant" else "🧑"):
         st.markdown(
             f'<div class="msg {"bot" if role=="assistant" else "user"}">'
             f'<div class="meta">{role} · {meta}</div>{content}</div>',
@@ -223,11 +207,9 @@ if examples_toggle:
 
 # ── 키 안내 ───────────────────────────────────────────────────────────────────
 if client is None:
-    st.info("사이드바에 **OpenAI API Key**를 입력하세요. 배포에선 Cloud의 **Secrets**에 저장 후 `st.secrets`로 읽는 것이 안전합니다.", icon="🔐")
+    st.info("사이드바에 **OpenAI API Key**를 입력하면 세션에 저장되어 계속 사용됩니다.", icon="🔐")
 
-# ── 채팅 입력(※ chat_input은 기본값 파라미터 없음) ───────────────────────────
-#    - suggestion이 있으면 그걸 최종 프롬프트로 즉시 사용
-#    - 없으면 사용자가 입력한 메시지 사용
+# ── 채팅 입력 (※ chat_input에는 default/value 없음) ──────────────────────────
 user_input = None if suggestion else st.chat_input("메시지를 입력하세요…")
 final_prompt = suggestion or user_input
 
@@ -244,11 +226,28 @@ if final_prompt and client:
     render_message("user", final_prompt)
     st.session_state.messages.append({**user_msg, "time": datetime.now().strftime("%H:%M")})
 
-    # 3) 어시스턴트 스트리밍(중복 없는 단일 요소)
+    # 3) 어시스턴트 스트리밍 (예외 처리 포함)
     with st.chat_message("assistant", avatar="🤖"):
-        response_text = write_stream_safe(
-            stream_completion_text(client, history, model, temperature, max_tokens)
-        )
+        try:
+            response_text = write_stream_safe(
+                stream_completion_text(client, history, model, temperature, max_tokens)
+            )
+        except openai.AuthenticationError:
+            st.error("**인증 오류(401)**: API Key가 잘못되었거나 만료되었습니다. 사이드바에 올바른 키를 다시 입력하세요.", icon="🚫")
+            st.stop()
+        except openai.PermissionDeniedError:
+            st.error("**권한 오류(403)**: 선택한 모델에 대한 권한이 없습니다. 모델을 변경하거나 계정을 확인하세요.", icon="🔒")
+            st.stop()
+        except openai.RateLimitError:
+            st.warning("**요청 제한(429)**: 호출이 많거나 한도를 초과했습니다. 잠시 후 다시 시도하세요.", icon="⏳")
+            st.stop()
+        except openai.BadRequestError as e:
+            st.error(f"**요청 오류(400)**: 파라미터/모델명이 잘못되었을 수 있습니다. 상세: {e}", icon="❗")
+            st.stop()
+        except openai.OpenAIError as e:
+            st.error(f"OpenAI 오류: {e}", icon="💥")
+            st.stop()
+
     st.session_state.messages.append(
         {"role": "assistant", "content": response_text or "(응답 없음)", "time": datetime.now().strftime("%H:%M")}
     )
