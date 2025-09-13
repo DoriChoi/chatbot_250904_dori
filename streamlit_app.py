@@ -78,12 +78,12 @@ st.markdown(
 )
 
 # ── 세션 준비/초기화(위젯 생성 전) ────────────────────────────────────────────
-# 프롬프트 입력 위젯용 키를 미리 준비
+# 메인 프롬프트와 옵션 기본값을 위젯 생성 전에 준비
 if "__main_task_area" not in st.session_state:
     st.session_state["__main_task_area"] = ""
 if "__trans_dir" not in st.session_state:
     st.session_state["__trans_dir"] = "영→한"
-# 이전 런에서 초기화 플래그가 켜졌다면, 여기서 값을 비우고 플래그 해제
+# 이전 런에서 입력창 초기화 플래그가 켜져 있으면 먼저 비우고 플래그 해제
 if st.session_state.get("__clear_main"):
     st.session_state["__main_task_area"] = ""
     st.session_state["__clear_main"] = False
@@ -97,27 +97,39 @@ with st.sidebar:
         "OpenAI API Key",
         value=key_default,
         type="password",
-        help="입력하면 세션에 저장됩니다. 새 세션/새 탭에선 다시 입력 필요."
+        help="OpenAI API Key를 입력하세요. 세션에 저장되어 새로고침 전까지 유지됩니다."
     )
 
     model = st.selectbox(
         "Model",
         options=["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-3.5-turbo"],
-        index=0
+        index=0,
+        help="사용할 OpenAI 모델을 선택합니다.\n- gpt-4o-mini: 빠르고 저렴(가벼운 작업)\n- gpt-4o: 고품질 응답\n- gpt-4.1-mini / gpt-3.5-turbo: 비용 절감 옵션"
     )
-    temperature = st.slider("Temperature", 0.0, 1.2, 0.7, 0.1)
-    max_tokens = st.slider("Max tokens(응답)", 256, 4096, 1024, 64)
+
+    temperature = st.slider(
+        "Temperature",
+        0.0, 1.2, 0.7, 0.1,
+        help="응답의 창의성(랜덤성)을 조절합니다. 낮을수록 일관성↑, 높을수록 다양성/창의성↑"
+    )
+
+    max_tokens = st.slider(
+        "Max tokens(응답)",
+        256, 4096, 1024, 64,
+        help="모델이 한 번에 생성할 수 있는 최대 토큰 수(단어 조각). 값이 클수록 긴 답변 가능하지만 비용/시간↑"
+    )
 
     system_prompt = st.text_area(
         "System prompt",
         value="당신은 전문적이면서 간결한 한국어 어시스턴트입니다. 핵심은 **굵게** 강조합니다.",
-        height=100
+        height=100,
+        help="모델의 기본 성격과 말투를 정의합니다. 예: '친절한 선생님처럼 설명해줘'"
     )
 
     st.divider()
     col_a, col_b = st.columns(2)
-    clear_clicked = col_a.button("대화 초기화", use_container_width=True)
-    download_clicked = col_b.button("내려받기(JSON)", use_container_width=True)
+    clear_clicked = col_a.button("대화 초기화", use_container_width=True, help="대화 히스토리를 모두 삭제합니다.")
+    download_clicked = col_b.button("내려받기(JSON)", use_container_width=True, help="현재까지의 대화 내용을 JSON으로 저장합니다.")
 
 # ── 세션 상태 ────────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
@@ -232,7 +244,7 @@ with st.container():
     st.markdown("#### 프롬프트")
     main_text = st.text_area(
         "여기에 텍스트를 붙여넣고 요약/번역/리뷰 버튼을 누르세요.",
-        key="__main_task_area",   # 값을 직접 대입하지 말고 키로 관리
+        key="__main_task_area",     # 값을 직접 대입하지 않고 세션 키로 관리
         height=160,
         label_visibility="collapsed",
         placeholder="텍스트를 입력하거나 붙여넣기…"
@@ -242,7 +254,8 @@ with st.container():
         "번역 방향",
         options=("영→한", "한→영"),
         horizontal=True,
-        key="__trans_dir"
+        key="__trans_dir",
+        help="번역 방향을 선택하세요. 선택에 따라 번역 프롬프트가 자동 구성됩니다."
     )
 
     c1, c2, c3, c4 = st.columns([1,1,1,1])
@@ -254,26 +267,26 @@ with st.container():
             return True
         return False
 
-    if c1.button("요약(3줄)", use_container_width=True, key="main_sum"):
+    if c1.button("요약(3줄)", use_container_width=True, key="main_sum", help="붙여넣은 텍스트를 3줄로 요약합니다."):
         if not guard_empty():
             send_prompt = "아래 텍스트를 3줄로 요약해줘:\n\n" + st.session_state["__main_task_area"]
 
-    if c2.button("번역", use_container_width=True, key="main_tr"):
+    if c2.button("번역", use_container_width=True, key="main_tr", help="선택한 방향(영→한/한→영)으로 번역합니다."):
         if not guard_empty():
             if st.session_state["__trans_dir"] == "영→한":
                 send_prompt = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n" + st.session_state["__main_task_area"]
             else:
                 send_prompt = "아래 한국어 문장을 자연스러운 영어로 번역해줘:\n\n" + st.session_state["__main_task_area"]
 
-    if c3.button("코드 리뷰", use_container_width=True, key="main_rev"):
+    if c3.button("코드 리뷰", use_container_width=True, key="main_rev", help="코드 품질/취약점/가독성을 리뷰하고 수정 예시를 제시합니다."):
         if not guard_empty():
             send_prompt = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n" + st.session_state["__main_task_area"]
 
-    if c4.button("그대로 보내기", use_container_width=True, key="main_send"):
+    if c4.button("그대로 보내기", use_container_width=True, key="main_send", help="붙여넣은 텍스트를 그대로 전송합니다."):
         if not guard_empty():
             send_prompt = st.session_state["__main_task_area"]
 
-# 커스텀 박스에서 눌렀다면 즉시 전송(대화 히스토리에 추가) + 다음 런에서 비우기
+# 커스텀 박스에서 눌렀다면 즉시 전송(대화 히스토리에 추가) + 다음 런에서 입력창 비우기
 if send_prompt and client:
     history: List[Dict[str, str]] = []
     if system_prompt.strip():
@@ -305,8 +318,8 @@ if send_prompt and client:
         {"role": "assistant", "content": response_text or "(응답 없음)", "time": datetime.now().strftime("%H:%M")}
     )
 
-    # 여기서 직접 "__main_task_area"에 대입하지 말 것!
-    st.session_state["__clear_main"] = True  # 다음 실행에서 위젯 생성 전에 비움
+    # 다음 실행에서 텍스트박스를 비우도록 플래그만 설정
+    st.session_state["__clear_main"] = True
     st.rerun()
 
 # ── 내려받기 ───────────────────────────────────────────────────────────────────
