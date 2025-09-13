@@ -21,14 +21,9 @@ st.set_page_config(
 st.markdown("""
 <style>
 :root{
-  --bg:#ffffff;
-  --card:#ffffff;
-  --acc:#10b981;
-  --user:#ecfeff;
-  --bot:#fff7ed;
-  --text:#111827;
-  --muted:#6b7280;
-  --border:#e5e7eb;
+  --bg:#ffffff; --card:#ffffff; --acc:#10b981;
+  --user:#ecfeff; --bot:#fff7ed; --text:#111827;
+  --muted:#6b7280; --border:#e5e7eb;
 }
 html, body, [data-testid="stAppViewContainer"]{
   background: radial-gradient(1200px 800px at 10% 10%, #f0f9ff 0%, var(--bg) 70%) !important;
@@ -65,7 +60,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ── 유틸 함수 ─────────────────────────────────────────────────────────────────
+# ── 유틸 ──────────────────────────────────────────────────────────────────────
 def strip_md(s: str) -> str:
     """굵게/이탤릭 마크다운(**, *, __, _) 제거"""
     s = re.sub(r"\*\*(.*?)\*\*", r"\1", s, flags=re.S)
@@ -93,6 +88,8 @@ if "__clear_main" not in st.session_state:
     st.session_state["__clear_main"] = False
 if "__ctx_mode" not in st.session_state:
     st.session_state["__ctx_mode"] = "이전 대화 무시"
+if "__lang_pair" not in st.session_state:
+    st.session_state["__lang_pair"] = "한국어 → 영어"  # 기본값
 if st.session_state["__clear_main"]:
     st.session_state["__main_task_area"] = ""
     st.session_state["__clear_main"] = False
@@ -102,8 +99,12 @@ with st.sidebar:
     st.subheader("환경 설정")
 
     key_default = st.session_state.get("OPENAI_API_KEY", "")
-    api_key_input = st.text_input("OpenAI API Key", value=key_default, type="password",
-        help="OpenAI API Key를 입력하세요. 세션에 저장되어 새로고침 전까지 유지됩니다.")
+    api_key_input = st.text_input(
+        "OpenAI API Key",
+        value=key_default,
+        type="password",
+        help="OpenAI API Key를 입력하세요. 세션에 저장되어 새로고침 전까지 유지됩니다."
+    )
 
     model = st.selectbox(
         "Model",
@@ -111,19 +112,25 @@ with st.sidebar:
         index=0,
         help="모델 종류 선택\n- 4o-mini: 빠르고 저렴\n- 4o: 고품질\n- 3.5/4.1-mini: 비용 절감"
     )
-    temperature = st.slider("Temperature",0.0,1.2,0.7,0.1,
-        help="창의성 조절: 낮을수록 일관성↑, 높을수록 다양성/창의성↑")
-    max_tokens = st.slider("Max tokens(응답)",256,4096,1024,64,
-        help="모델이 한 번에 생성할 최대 토큰 수. 값↑ = 긴 응답 가능")
-    system_prompt = st.text_area("System prompt",
+    temperature = st.slider(
+        "Temperature", 0.0, 1.2, 0.7, 0.1,
+        help="창의성 조절: 낮을수록 일관성↑, 높을수록 다양성/창의성↑"
+    )
+    max_tokens = st.slider(
+        "Max tokens(응답)", 256, 4096, 1024, 64,
+        help="모델이 한 번에 생성할 최대 토큰 수. 값↑ = 긴 응답 가능"
+    )
+    system_prompt = st.text_area(
+        "System prompt",
         value="당신은 전문적이면서 간결한 한국어 어시스턴트입니다. 핵심은 명확하게 강조합니다.",
         height=100,
-        help="모델의 기본 성격과 말투를 정의합니다.")
+        help="모델의 기본 성격과 말투를 정의합니다."
+    )
 
     st.divider()
     col_a,col_b = st.columns(2)
-    clear_clicked = col_a.button("대화 초기화", use_container_width=True)
-    download_clicked = col_b.button("내려받기(JSON)", use_container_width=True)
+    clear_clicked = col_a.button("대화 초기화", use_container_width=True, help="대화 히스토리를 모두 삭제합니다.")
+    download_clicked = col_b.button("내려받기(JSON)", use_container_width=True, help="현재까지의 대화를 JSON으로 저장합니다.")
 
 if clear_clicked:
     st.session_state.messages = []
@@ -137,7 +144,7 @@ def get_client() -> Optional[OpenAI]:
     try: return OpenAI(api_key=key)
     except: return None
 
-client=get_client()
+client = get_client()
 
 # ── 스트리밍 ───────────────────────────────────────────────────────────────
 def stream_completion_text(_client:OpenAI,_messages:List[Dict[str,str]],_model:str,_temperature:float,_max_tokens:int)->Generator[str,None,None]:
@@ -174,39 +181,37 @@ if user_input and client:
 # ── 메인 프롬프트 박스 ──────────────────────────────────────────────────────
 st.markdown("<hr/>",unsafe_allow_html=True)
 st.markdown("#### 프롬프트")
-main_text=st.text_area("입력창",key="__main_task_area",height=160,label_visibility="collapsed",placeholder="텍스트를 입력하세요…")
-ctx_mode=st.radio("컨텍스트",["대화 연속","이전 대화 무시"],index=1,key="__ctx_mode")
 
-c1,c2,c3,c4=st.columns(4)
-send_prompt=None;action=None
+main_text = st.text_area(
+    "입력창", key="__main_task_area", height=160,
+    label_visibility="collapsed", placeholder="텍스트를 입력하세요…"
+)
 
-def guard_empty():
+# 언어 페어 셀렉트박스 (디폴트: 한국어 → 영어)
+LANG_PAIRS = [
+    "한국어 → 영어", "영어 → 한국어",
+    "한국어 → 중국어", "중국어 → 한국어",
+    "한국어 → 일본어", "일본어 → 한국어",
+    "한국어 → 프랑스어", "프랑스어 → 한국어",
+    "한국어 → 스페인어", "스페인어 → 한국어",
+]
+lang_pair = st.selectbox(
+    "번역 언어",
+    options=LANG_PAIRS,
+    index=LANG_PAIRS.index(st.session_state["__lang_pair"]) if st.session_state["__lang_pair"] in LANG_PAIRS else 0,
+    key="__lang_pair",
+    help="번역할 언어 쌍을 선택하세요. 기본값은 한국어 → 영어입니다."
+)
+
+ctx_mode = st.radio(
+    "컨텍스트",
+    ["대화 연속","이전 대화 무시"], index=1, key="__ctx_mode",
+    help="대화 연속: 이전 대화 맥락 포함 / 이전 대화 무시: 현재 입력만 보냄"
+)
+
+c1,c2,c3,c4 = st.columns(4)
+send_prompt=None; action=None
+
+def guard_empty()->bool:
     if not main_text.strip():
-        st.warning("프롬프트가 비었습니다.");return True
-    return False
-
-if c1.button("요약(3줄)",use_container_width=True):
-    if not guard_empty(): send_prompt="아래 텍스트를 3줄로 요약:\n\n"+main_text;action="sum"
-if c2.button("번역",use_container_width=True):
-    if not guard_empty(): send_prompt="아래 텍스트를 번역:\n\n"+main_text;action="tr"
-if c3.button("코드 리뷰",use_container_width=True):
-    if not guard_empty(): send_prompt="아래 코드 리뷰:\n\n"+main_text;action="rev"
-if c4.button("그대로 보내기",use_container_width=True):
-    if not guard_empty(): send_prompt=main_text;action="raw"
-
-if send_prompt and client:
-    history=[{"role":"system","content":system_prompt.strip()}] if system_prompt.strip() else []
-    if st.session_state["__ctx_mode"]=="대화 연속": history.extend(st.session_state.messages)
-    history.append({"role":"user","content":send_prompt})
-    render_message("user",send_prompt)
-    st.session_state.messages.append({"role":"user","content":send_prompt,"time":datetime.now().strftime("%H:%M")})
-    with st.chat_message("assistant",avatar="🤖"):
-        response_text=write_stream_safe(stream_completion_text(client,history,model,temperature,max_tokens))
-    st.session_state.messages.append({"role":"assistant","content":response_text,"time":datetime.now().strftime("%H:%M")})
-    st.session_state["__clear_main"]=True
-    st.rerun()
-
-# ── 내려받기 ────────────────────────────────────────────────────────────────
-if download_clicked:
-    fname=f"chat_{datetime.now():%Y%m%d_%H%M%S}.json"
-    st.download_button("대화 저장",data=json.dumps(st.session_state.messages,ensure_ascii=False,indent=2),file_name=fname,mime="application/json")
+        st.warning("프롬프트가 비었습
