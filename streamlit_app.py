@@ -78,11 +78,13 @@ st.markdown(
 )
 
 # ── 세션 준비/초기화(위젯 생성 전) ────────────────────────────────────────────
-# 메인 프롬프트와 옵션 기본값을 위젯 생성 전에 준비
 if "__main_task_area" not in st.session_state:
     st.session_state["__main_task_area"] = ""
 if "__trans_dir" not in st.session_state:
     st.session_state["__trans_dir"] = "영→한"
+# 새로 추가: 컨텍스트 모드 (기본=이전 대화 무시)
+if "__ctx_mode" not in st.session_state:
+    st.session_state["__ctx_mode"] = "이전 대화 무시"  # 또는 "대화 연속"
 # 이전 런에서 입력창 초기화 플래그가 켜져 있으면 먼저 비우고 플래그 해제
 if st.session_state.get("__clear_main"):
     st.session_state["__main_task_area"] = ""
@@ -238,28 +240,41 @@ if user_input and client:
         {"role": "assistant", "content": response_text or "(응답 없음)", "time": datetime.now().strftime("%H:%M")}
     )
 
-# ── 메인 프롬프트 박스(텍스트 + 번역 방향 + 액션 버튼) ───────────────────────
+# ── 메인 프롬프트 박스(텍스트 + 번역 방향 + 컨텍스트 모드 + 액션 버튼) ────────
 st.markdown("<hr/>", unsafe_allow_html=True)
 with st.container():
     st.markdown("#### 프롬프트")
     main_text = st.text_area(
-        "여기에 텍스트를 붙여넣고 요약/번역/리뷰 버튼을 누르세요.",
-        key="__main_task_area",     # 값을 직접 대입하지 않고 세션 키로 관리
+        "여기에 텍스트를 붙여넣고 요약/번역/리뷰/그대로 보내기 버튼을 누르세요.",
+        key="__main_task_area",
         height=160,
         label_visibility="collapsed",
         placeholder="텍스트를 입력하거나 붙여넣기…"
     )
 
-    trans_dir = st.radio(
-        "번역 방향",
-        options=("영→한", "한→영"),
-        horizontal=True,
-        key="__trans_dir",
-        help="번역 방향을 선택하세요. 선택에 따라 번역 프롬프트가 자동 구성됩니다."
-    )
+    cols = st.columns([1,1,1])
+    with cols[0]:
+        trans_dir = st.radio(
+            "번역 방향",
+            options=("영→한", "한→영"),
+            horizontal=True,
+            key="__trans_dir",
+            help="번역 방향을 선택하세요. 선택에 따라 번역 프롬프트가 자동 구성됩니다."
+        )
+    with cols[1]:
+        ctx_mode = st.radio(
+            "컨텍스트",
+            options=("대화 연속", "이전 대화 무시"),
+            index=1,  # 기본값: 이전 대화 무시
+            key="__ctx_mode",
+            help="대화 연속: 이전 대화 맥락을 함께 보냄\n이전 대화 무시: 지금 입력만 단독으로 보냄"
+        )
+    with cols[2]:
+        st.write("")  # spacing
 
     c1, c2, c3, c4 = st.columns([1,1,1,1])
     send_prompt = None
+    action = None  # 'summary' | 'translate' | 'review' | 'send_raw'
 
     def guard_empty() -> bool:
         if not (st.session_state["__main_task_area"] or "").strip():
@@ -267,37 +282,60 @@ with st.container():
             return True
         return False
 
-    if c1.button("요약(3줄)", use_container_width=True, key="main_sum", help="붙여넣은 텍스트를 3줄로 요약합니다."):
+    if c1.button("요약(3줄)", use_container_width=True, key="main_sum",
+                 help="붙여넣은 텍스트를 3줄로 요약합니다."):
         if not guard_empty():
             send_prompt = "아래 텍스트를 3줄로 요약해줘:\n\n" + st.session_state["__main_task_area"]
+            action = "summary"
 
-    if c2.button("번역", use_container_width=True, key="main_tr", help="선택한 방향(영→한/한→영)으로 번역합니다."):
+    if c2.button("번역", use_container_width=True, key="main_tr",
+                 help="선택한 방향(영→한/한→영)으로 번역합니다."):
         if not guard_empty():
             if st.session_state["__trans_dir"] == "영→한":
                 send_prompt = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n" + st.session_state["__main_task_area"]
             else:
                 send_prompt = "아래 한국어 문장을 자연스러운 영어로 번역해줘:\n\n" + st.session_state["__main_task_area"]
+            action = "translate"
 
-    if c3.button("코드 리뷰", use_container_width=True, key="main_rev", help="코드 품질/취약점/가독성을 리뷰하고 수정 예시를 제시합니다."):
+    if c3.button("코드 리뷰", use_container_width=True, key="main_rev",
+                 help="코드 품질/취약점/가독성을 리뷰하고 수정 예시를 제시합니다."):
         if not guard_empty():
             send_prompt = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n" + st.session_state["__main_task_area"]
+            action = "review"
 
-    if c4.button("그대로 보내기", use_container_width=True, key="main_send", help="붙여넣은 텍스트를 그대로 전송합니다."):
+    if c4.button("그대로 보내기", use_container_width=True, key="main_send",
+                 help="붙여넣은 텍스트를 가공 없이 그대로 전송합니다. (기본: 이전 대화 무시)"):
         if not guard_empty():
             send_prompt = st.session_state["__main_task_area"]
+            action = "send_raw"
+            # 그대로 보내기는 기본적으로 맥락을 무시하도록 강제할 수도 있음:
+            # ctx_mode = "이전 대화 무시"
+            # st.session_state["__ctx_mode"] = "이전 대화 무시"
 
-# 커스텀 박스에서 눌렀다면 즉시 전송(대화 히스토리에 추가) + 다음 런에서 입력창 비우기
+# 커스텀 박스에서 눌렀다면 즉시 전송 + 다음 런에서 입력창 비우기
 if send_prompt and client:
+    # === 컨텍스트 선택 적용 ===
     history: List[Dict[str, str]] = []
     if system_prompt.strip():
         history.append({"role": "system", "content": system_prompt.strip()})
-    history.extend(st.session_state.messages)
+
+    use_history = (st.session_state["__ctx_mode"] == "대화 연속")
+    # "그대로 보내기"는 기본적으로 이전 대화 무시를 권장
+    if action == "send_raw" and st.session_state["__ctx_mode"] != "대화 연속":
+        use_history = False
+
+    if use_history:
+        history.extend(st.session_state.messages)
+
+    # 사용자 메시지 추가
     user_msg = {"role": "user", "content": send_prompt}
     history.append(user_msg)
 
+    # 렌더 + 세션 저장
     render_message("user", send_prompt)
     st.session_state.messages.append({**user_msg, "time": datetime.now().strftime("%H:%M")})
 
+    # 스트리밍 응답
     with st.chat_message("assistant", avatar="🤖"):
         try:
             response_text = write_stream_safe(
