@@ -105,10 +105,24 @@ with st.sidebar:
     )
 
     st.divider()
-    col_a, col_b, col_c = st.columns(3)
+    col_a, col_b = st.columns(2)
     clear_clicked = col_a.button("대화 초기화", use_container_width=True)
     download_clicked = col_b.button("내려받기(JSON)", use_container_width=True)
-    examples_toggle = col_c.toggle("추천 질문", value=False)
+
+    # ── [수정 포인트] 추천 질문: 시스템 프롬프트 '아래'에 위치 ───────────────
+    st.markdown("#### 추천 질문")
+    examples_toggle = st.toggle("패널 열기", value=False)
+    if examples_toggle:
+        st.caption("클릭하면 바로 전송됩니다.")
+        if st.button("요약해줘(3줄)", use_container_width=True, key="sug_sum"):
+            st.session_state["__suggestion"] = "아래 텍스트를 3줄로 요약해줘:\n\n"
+        if st.button("영→한 번역", use_container_width=True, key="sug_tr"):
+            st.session_state["__suggestion"] = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n"
+        if st.button("코드 리뷰", use_container_width=True, key="sug_rev"):
+            st.session_state["__suggestion"] = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n"
+    else:
+        # 토글을 끄면 잔여 제안값 제거
+        st.session_state.pop("__suggestion", None)
 
 # ── 세션 상태 ────────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
@@ -193,17 +207,8 @@ def render_message(role: str, content: str, when: Optional[str] = None):
 for m in st.session_state.messages:
     render_message(m["role"], m["content"], m.get("time"))
 
-# ── 추천 질문(클릭 시 즉시 전송) ───────────────────────────────────────────────
-suggestion: Optional[str] = None
-if examples_toggle:
-    st.caption("클릭하면 바로 전송됩니다.")
-    c1, c2, c3 = st.columns(3)
-    if c1.button("요약해줘(3줄)", use_container_width=True):
-        suggestion = "아래 텍스트를 3줄로 요약해줘:\n\n"
-    if c2.button("영→한 번역", use_container_width=True):
-        suggestion = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n"
-    if c3.button("코드 리뷰", use_container_width=True):
-        suggestion = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n"
+# ── [수정 포인트] 추천 질문 값 한 번만 소비 ───────────────────────────────────
+suggestion: Optional[str] = st.session_state.pop("__suggestion", None)
 
 # ── 키 안내 ───────────────────────────────────────────────────────────────────
 if client is None:
