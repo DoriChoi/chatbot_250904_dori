@@ -90,6 +90,7 @@ if "__ctx_mode" not in st.session_state:
     st.session_state["__ctx_mode"] = "이전 대화 무시"
 if "__lang_pair" not in st.session_state:
     st.session_state["__lang_pair"] = "한국어 → 영어"  # 기본값
+# 이전 런에서 비우기 플래그가 켜졌다면 먼저 비움
 if st.session_state["__clear_main"]:
     st.session_state["__main_task_area"] = ""
     st.session_state["__clear_main"] = False
@@ -110,7 +111,7 @@ with st.sidebar:
         "Model",
         ["gpt-4o-mini","gpt-4o","gpt-4.1-mini","gpt-3.5-turbo"],
         index=0,
-        help="모델 종류 선택\n- 4o-mini: 빠르고 저렴\n- 4o: 고품질\n- 3.5/4.1-mini: 비용 절감"
+        help="모델 선택\n- 4o-mini: 빠르고 저렴\n- 4o: 고품질\n- 3.5/4.1-mini: 비용 절감"
     )
     temperature = st.slider(
         "Temperature", 0.0, 1.2, 0.7, 0.1,
@@ -138,53 +139,84 @@ if clear_clicked:
 
 # ── OpenAI Client ──────────────────────────────────────────────────────────
 def get_client() -> Optional[OpenAI]:
-    if api_key_input: st.session_state["OPENAI_API_KEY"]=api_key_input.strip()
+    if api_key_input:
+        st.session_state["OPENAI_API_KEY"] = api_key_input.strip()
     key = st.session_state.get("OPENAI_API_KEY","").strip()
-    if not key: return None
-    try: return OpenAI(api_key=key)
-    except: return None
+    if not key:
+        return None
+    try:
+        return OpenAI(api_key=key)
+    except:
+        return None
 
 client = get_client()
 
 # ── 스트리밍 ───────────────────────────────────────────────────────────────
-def stream_completion_text(_client:OpenAI,_messages:List[Dict[str,str]],_model:str,_temperature:float,_max_tokens:int)->Generator[str,None,None]:
-    resp=_client.chat.completions.create(model=_model,messages=_messages,temperature=_temperature,max_tokens=_max_tokens,stream=True)
+def stream_completion_text(
+    _client: OpenAI,
+    _messages: List[Dict[str,str]],
+    _model: str,
+    _temperature: float,
+    _max_tokens: int
+) -> Generator[str, None, None]:
+    resp = _client.chat.completions.create(
+        model=_model,
+        messages=_messages,
+        temperature=_temperature,
+        max_tokens=_max_tokens,
+        stream=True
+    )
     for chunk in resp:
-        if chunk.choices and getattr(chunk.choices[0].delta,"content",None):
+        if chunk.choices and getattr(chunk.choices[0].delta, "content", None):
             yield chunk.choices[0].delta.content
 
-def write_stream_safe(gen:Generator[str,None,None])->str:
-    ph=st.empty();acc=[]
+def write_stream_safe(gen: Generator[str, None, None]) -> str:
+    ph = st.empty()
+    acc: List[str] = []
     for tok in gen:
         acc.append(tok)
-        safe=strip_md("".join(acc))
-        ph.markdown(f'<div class="msg bot"><div class="meta">assistant · {datetime.now():%H:%M}</div>{safe}</div>',unsafe_allow_html=True)
+        safe = strip_md("".join(acc))
+        ph.markdown(
+            f'<div class="msg bot"><div class="meta">assistant · {datetime.now():%H:%M}</div>{safe}</div>',
+            unsafe_allow_html=True
+        )
     return strip_md("".join(acc))
 
 # ── 과거 메시지 렌더링 ──────────────────────────────────────────────────────
 for m in st.session_state.messages:
-    render_message(m["role"],m["content"],m.get("time"))
+    render_message(m["role"], m["content"], m.get("time"))
 
-# ── 자유 입력 ───────────────────────────────────────────────────────────────
+# ── 자유 입력(하단 chat_input) ──────────────────────────────────────────────
 user_input = st.chat_input("메시지를 입력하세요…")
 if user_input and client:
-    history=[{"role":"system","content":system_prompt.strip()}] if system_prompt.strip() else []
+    history: List[Dict[str,str]] = []
+    if system_prompt.strip():
+        history.append({"role":"system","content":system_prompt.strip()})
     history.extend(st.session_state.messages)
-    user_msg={"role":"user","content":user_input}
+    user_msg = {"role":"user","content":user_input}
     history.append(user_msg)
-    render_message("user",user_input)
-    st.session_state.messages.append({**user_msg,"time":datetime.now().strftime("%H:%M")})
-    with st.chat_message("assistant",avatar="🤖"):
-        response_text=write_stream_safe(stream_completion_text(client,history,model,temperature,max_tokens))
-    st.session_state.messages.append({"role":"assistant","content":response_text,"time":datetime.now().strftime("%H:%M")})
+
+    render_message("user", user_input)
+    st.session_state.messages.append({**user_msg, "time": datetime.now().strftime("%H:%M")})
+
+    with st.chat_message("assistant", avatar="🤖"):
+        response_text = write_stream_safe(
+            stream_completion_text(client, history, model, temperature, max_tokens)
+        )
+    st.session_state.messages.append(
+        {"role":"assistant","content":response_text,"time":datetime.now().strftime("%H:%M")}
+    )
 
 # ── 메인 프롬프트 박스 ──────────────────────────────────────────────────────
-st.markdown("<hr/>",unsafe_allow_html=True)
+st.markdown("<hr/>", unsafe_allow_html=True)
 st.markdown("#### 프롬프트")
 
 main_text = st.text_area(
-    "입력창", key="__main_task_area", height=160,
-    label_visibility="collapsed", placeholder="텍스트를 입력하세요…"
+    "입력창",
+    key="__main_task_area",
+    height=160,
+    label_visibility="collapsed",
+    placeholder="텍스트를 입력하세요…"
 )
 
 # 언어 페어 셀렉트박스 (디폴트: 한국어 → 영어)
@@ -205,13 +237,71 @@ lang_pair = st.selectbox(
 
 ctx_mode = st.radio(
     "컨텍스트",
-    ["대화 연속","이전 대화 무시"], index=1, key="__ctx_mode",
+    ["대화 연속","이전 대화 무시"],
+    index=1, key="__ctx_mode",
     help="대화 연속: 이전 대화 맥락 포함 / 이전 대화 무시: 현재 입력만 보냄"
 )
 
-c1,c2,c3,c4 = st.columns(4)
-send_prompt=None; action=None
+c1, c2, c3, c4 = st.columns(4)
+send_prompt: Optional[str] = None
 
-def guard_empty()->bool:
-    if not main_text.strip():
-        st.warning("프롬프트가 비었습
+def guard_empty() -> bool:
+    if not (main_text or "").strip():
+        st.warning("프롬프트가 비어 있습니다.", icon="⚠️")
+        return True
+    return False
+
+def build_translate_prompt(pair: str, text: str) -> str:
+    src, dst = pair.split(" → ")
+    return f"아래 {src} 문장을 자연스러운 {dst}로 번역해줘:\n\n{text}"
+
+if c1.button("요약(3줄)", use_container_width=True, help="붙여넣은 텍스트를 3줄로 요약합니다."):
+    if not guard_empty():
+        send_prompt = "아래 텍스트를 3줄로 요약:\n\n" + main_text
+
+if c2.button("번역", use_container_width=True, help="선택한 언어 쌍으로 번역합니다."):
+    if not guard_empty():
+        send_prompt = build_translate_prompt(lang_pair, main_text)
+
+if c3.button("코드 리뷰", use_container_width=True, help="코드 품질/취약점/가독성 리뷰 및 수정 예시 제시."):
+    if not guard_empty():
+        send_prompt = "아래 코드 리뷰:\n\n" + main_text
+
+if c4.button("그대로 보내기", use_container_width=True, help="텍스트를 가공 없이 그대로 전송합니다."):
+    if not guard_empty():
+        send_prompt = main_text
+
+if send_prompt and client:
+    history: List[Dict[str,str]] = []
+    if system_prompt.strip():
+        history.append({"role":"system","content":system_prompt.strip()})
+    if st.session_state["__ctx_mode"] == "대화 연속":
+        history.extend(st.session_state.messages)
+
+    user_msg = {"role":"user","content":send_prompt}
+    history.append(user_msg)
+
+    render_message("user", send_prompt)
+    st.session_state.messages.append({**user_msg, "time": datetime.now().strftime("%H:%M")})
+
+    with st.chat_message("assistant", avatar="🤖"):
+        response_text = write_stream_safe(
+            stream_completion_text(client, history, model, temperature, max_tokens)
+        )
+    st.session_state.messages.append(
+        {"role":"assistant","content":response_text,"time":datetime.now().strftime("%H:%M")}
+    )
+
+    # 다음 런에서 입력창을 비우도록 플래그만 설정 (동일 런 직접 대입 금지)
+    st.session_state["__clear_main"] = True
+    st.rerun()
+
+# ── 내려받기 ────────────────────────────────────────────────────────────────
+if download_clicked:
+    fname = f"chat_{datetime.now():%Y%m%d_%H%M%S}.json"
+    st.download_button(
+        "대화 저장",
+        data=json.dumps(st.session_state.messages, ensure_ascii=False, indent=2),
+        file_name=fname,
+        mime="application/json"
+    )
