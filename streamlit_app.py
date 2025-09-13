@@ -77,6 +77,17 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# ── 세션 준비/초기화(위젯 생성 전) ────────────────────────────────────────────
+# 프롬프트 입력 위젯용 키를 미리 준비
+if "__main_task_area" not in st.session_state:
+    st.session_state["__main_task_area"] = ""
+if "__trans_dir" not in st.session_state:
+    st.session_state["__trans_dir"] = "영→한"
+# 이전 런에서 초기화 플래그가 켜졌다면, 여기서 값을 비우고 플래그 해제
+if st.session_state.get("__clear_main"):
+    st.session_state["__main_task_area"] = ""
+    st.session_state["__clear_main"] = False
+
 # ── 사이드바(설정/유틸) ───────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("환경 설정")
@@ -164,7 +175,7 @@ def write_stream_safe(gen: Generator[str, None, None]) -> str:
         )
     return "".join(acc)
 
-# ── 기존 메시지 렌더링 ────────────────────────────────────────────────────────
+# ── 메시지 렌더링 ─────────────────────────────────────────────────────────────
 def render_message(role: str, content: str, when: Optional[str] = None):
     meta = when or datetime.now().strftime("%H:%M")
     with st.chat_message("assistant" if role == "assistant" else "user",
@@ -184,7 +195,6 @@ if client is None:
 
 # ── 자유 채팅 입력(하단 고정) ────────────────────────────────────────────────
 user_input = st.chat_input("메시지를 입력하세요…")
-
 if user_input and client:
     history: List[Dict[str, str]] = []
     if system_prompt.strip():
@@ -222,7 +232,7 @@ with st.container():
     st.markdown("#### 프롬프트")
     main_text = st.text_area(
         "여기에 텍스트를 붙여넣고 요약/번역/리뷰 버튼을 누르세요.",
-        key="__main_task_area",
+        key="__main_task_area",   # 값을 직접 대입하지 말고 키로 관리
         height=160,
         label_visibility="collapsed",
         placeholder="텍스트를 입력하거나 붙여넣기…"
@@ -239,31 +249,31 @@ with st.container():
     send_prompt = None
 
     def guard_empty() -> bool:
-        if not (main_text or "").strip():
+        if not (st.session_state["__main_task_area"] or "").strip():
             st.warning("프롬프트가 비어 있습니다. 텍스트를 입력하세요.", icon="⚠️")
             return True
         return False
 
     if c1.button("요약(3줄)", use_container_width=True, key="main_sum"):
         if not guard_empty():
-            send_prompt = "아래 텍스트를 3줄로 요약해줘:\n\n" + main_text
+            send_prompt = "아래 텍스트를 3줄로 요약해줘:\n\n" + st.session_state["__main_task_area"]
 
     if c2.button("번역", use_container_width=True, key="main_tr"):
         if not guard_empty():
-            if trans_dir == "영→한":
-                send_prompt = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n" + main_text
+            if st.session_state["__trans_dir"] == "영→한":
+                send_prompt = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n" + st.session_state["__main_task_area"]
             else:
-                send_prompt = "아래 한국어 문장을 자연스러운 영어로 번역해줘:\n\n" + main_text
+                send_prompt = "아래 한국어 문장을 자연스러운 영어로 번역해줘:\n\n" + st.session_state["__main_task_area"]
 
     if c3.button("코드 리뷰", use_container_width=True, key="main_rev"):
         if not guard_empty():
-            send_prompt = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n" + main_text
+            send_prompt = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n" + st.session_state["__main_task_area"]
 
     if c4.button("그대로 보내기", use_container_width=True, key="main_send"):
         if not guard_empty():
-            send_prompt = main_text
+            send_prompt = st.session_state["__main_task_area"]
 
-# 커스텀 박스에서 눌렀다면 즉시 전송(대화 히스토리에 추가) + 입력창 초기화
+# 커스텀 박스에서 눌렀다면 즉시 전송(대화 히스토리에 추가) + 다음 런에서 비우기
 if send_prompt and client:
     history: List[Dict[str, str]] = []
     if system_prompt.strip():
@@ -295,9 +305,8 @@ if send_prompt and client:
         {"role": "assistant", "content": response_text or "(응답 없음)", "time": datetime.now().strftime("%H:%M")}
     )
 
-    # >>> 응답 후 프롬프트 비우기
-    st.session_state["__main_task_area"] = ""
-
+    # 여기서 직접 "__main_task_area"에 대입하지 말 것!
+    st.session_state["__clear_main"] = True  # 다음 실행에서 위젯 생성 전에 비움
     st.rerun()
 
 # ── 내려받기 ───────────────────────────────────────────────────────────────────
