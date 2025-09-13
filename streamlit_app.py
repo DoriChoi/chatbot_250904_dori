@@ -120,7 +120,6 @@ if clear_clicked:
 def get_client() -> Optional[OpenAI]:
     if api_key_input and api_key_input.strip():
         st.session_state["OPENAI_API_KEY"] = api_key_input.strip()
-
     key = st.session_state.get("OPENAI_API_KEY", "").strip()
     if not key:
         return None
@@ -217,7 +216,7 @@ if user_input and client:
         {"role": "assistant", "content": response_text or "(응답 없음)", "time": datetime.now().strftime("%H:%M")}
     )
 
-# ── 메인 프롬프트 박스(텍스트 + 액션 버튼) ───────────────────────────────────
+# ── 메인 프롬프트 박스(텍스트 + 번역 방향 + 액션 버튼) ───────────────────────
 st.markdown("<hr/>", unsafe_allow_html=True)
 with st.container():
     st.markdown("#### 프롬프트")
@@ -228,18 +227,43 @@ with st.container():
         label_visibility="collapsed",
         placeholder="텍스트를 입력하거나 붙여넣기…"
     )
+
+    trans_dir = st.radio(
+        "번역 방향",
+        options=("영→한", "한→영"),
+        horizontal=True,
+        key="__trans_dir"
+    )
+
     c1, c2, c3, c4 = st.columns([1,1,1,1])
     send_prompt = None
-    if c1.button("요약(3줄)", use_container_width=True, key="main_sum"):
-        send_prompt = "아래 텍스트를 3줄로 요약해줘:\n\n" + (main_text or "")
-    if c2.button("영→한 번역", use_container_width=True, key="main_tr"):
-        send_prompt = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n" + (main_text or "")
-    if c3.button("코드 리뷰", use_container_width=True, key="main_rev"):
-        send_prompt = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n" + (main_text or "")
-    if c4.button("그대로 보내기", use_container_width=True, key="main_send"):
-        send_prompt = main_text or ""
 
-# 커스텀 박스에서 눌렀다면 즉시 전송(대화 히스토리에 추가)
+    def guard_empty() -> bool:
+        if not (main_text or "").strip():
+            st.warning("프롬프트가 비어 있습니다. 텍스트를 입력하세요.", icon="⚠️")
+            return True
+        return False
+
+    if c1.button("요약(3줄)", use_container_width=True, key="main_sum"):
+        if not guard_empty():
+            send_prompt = "아래 텍스트를 3줄로 요약해줘:\n\n" + main_text
+
+    if c2.button("번역", use_container_width=True, key="main_tr"):
+        if not guard_empty():
+            if trans_dir == "영→한":
+                send_prompt = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n" + main_text
+            else:
+                send_prompt = "아래 한국어 문장을 자연스러운 영어로 번역해줘:\n\n" + main_text
+
+    if c3.button("코드 리뷰", use_container_width=True, key="main_rev"):
+        if not guard_empty():
+            send_prompt = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n" + main_text
+
+    if c4.button("그대로 보내기", use_container_width=True, key="main_send"):
+        if not guard_empty():
+            send_prompt = main_text
+
+# 커스텀 박스에서 눌렀다면 즉시 전송(대화 히스토리에 추가) + 입력창 초기화
 if send_prompt and client:
     history: List[Dict[str, str]] = []
     if system_prompt.strip():
@@ -270,6 +294,10 @@ if send_prompt and client:
     st.session_state.messages.append(
         {"role": "assistant", "content": response_text or "(응답 없음)", "time": datetime.now().strftime("%H:%M")}
     )
+
+    # >>> 응답 후 프롬프트 비우기
+    st.session_state["__main_task_area"] = ""
+
     st.rerun()
 
 # ── 내려받기 ───────────────────────────────────────────────────────────────────
