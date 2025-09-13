@@ -109,20 +109,26 @@ with st.sidebar:
     clear_clicked = col_a.button("대화 초기화", use_container_width=True)
     download_clicked = col_b.button("내려받기(JSON)", use_container_width=True)
 
-    # ── [수정 포인트] 추천 질문: 시스템 프롬프트 '아래'에 위치 ───────────────
+    # ── 추천 작업(텍스트 + 액션 버튼) ────────────────────────────────────────
     st.markdown("#### 추천 질문")
     examples_toggle = st.toggle("패널 열기", value=False)
     if examples_toggle:
-        st.caption("클릭하면 바로 전송됩니다.")
-        if st.button("요약해줘(3줄)", use_container_width=True, key="sug_sum"):
+        st.caption("여기에 작업할 텍스트를 붙여넣고, 아래 버튼을 누르세요.")
+        task_text = st.text_area("작업 대상 텍스트", key="__task_text_area", height=140)
+
+        c1, c2, c3 = st.columns(3)
+        if c1.button("요약(3줄)", use_container_width=True, key="sug_sum"):
             st.session_state["__suggestion"] = "아래 텍스트를 3줄로 요약해줘:\n\n"
-        if st.button("영→한 번역", use_container_width=True, key="sug_tr"):
+            st.session_state["__task_text"] = task_text or ""
+        if c2.button("영→한 번역", use_container_width=True, key="sug_tr"):
             st.session_state["__suggestion"] = "아래 영어 문장을 자연스러운 한국어로 번역해줘:\n\n"
-        if st.button("코드 리뷰", use_container_width=True, key="sug_rev"):
+            st.session_state["__task_text"] = task_text or ""
+        if c3.button("코드 리뷰", use_container_width=True, key="sug_rev"):
             st.session_state["__suggestion"] = "아래 코드에서 취약점/가독성/성능을 리뷰하고 수정 예시를 제시해줘:\n\n"
+            st.session_state["__task_text"] = task_text or ""
     else:
-        # 토글을 끄면 잔여 제안값 제거
         st.session_state.pop("__suggestion", None)
+        st.session_state.pop("__task_text", None)
 
 # ── 세션 상태 ────────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
@@ -132,7 +138,7 @@ if clear_clicked:
     st.session_state.messages = []
     st.rerun()
 
-# ── OpenAI 클라이언트: 입력값→세션에 고정 저장 + 예외 처리 ────────────────────
+# ── OpenAI 클라이언트 ────────────────────────────────────────────────────────
 def get_client() -> Optional[OpenAI]:
     # 1) 방금 입력값이 있으면 세션에 반영
     if api_key_input and api_key_input.strip():
@@ -207,16 +213,23 @@ def render_message(role: str, content: str, when: Optional[str] = None):
 for m in st.session_state.messages:
     render_message(m["role"], m["content"], m.get("time"))
 
-# ── [수정 포인트] 추천 질문 값 한 번만 소비 ───────────────────────────────────
+# ── 추천 작업 값 한 번만 소비 ────────────────────────────────────────────────
 suggestion: Optional[str] = st.session_state.pop("__suggestion", None)
+task_text_mem: Optional[str] = st.session_state.pop("__task_text", None)
+
+# suggestion이 있으면 chat_input 대신 즉시 전송용 prompt 구성
+if suggestion:
+    combined = suggestion + (task_text_mem or "")
+else:
+    combined = None
 
 # ── 키 안내 ───────────────────────────────────────────────────────────────────
 if client is None:
     st.info("사이드바에 **OpenAI API Key**를 입력하면 세션에 저장되어 계속 사용됩니다.", icon="🔐")
 
-# ── 채팅 입력 (※ chat_input에는 default/value 없음) ──────────────────────────
-user_input = None if suggestion else st.chat_input("메시지를 입력하세요…")
-final_prompt = suggestion or user_input
+# ── 채팅 입력 ────────────────────────────────────────────────────────────────
+user_input = None if combined else st.chat_input("메시지를 입력하세요…")
+final_prompt = combined or user_input
 
 if final_prompt and client:
     # 1) 메시지 스택 구성
